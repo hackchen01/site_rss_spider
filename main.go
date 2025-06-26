@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/xml"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -38,6 +39,7 @@ type Item struct {
 type SiteConfig struct {
 	Name          string
 	URL           string
+	ItemSelector  string
 	TitleSelector string
 	LinkSelector  string
 	DescSelector  string
@@ -58,7 +60,10 @@ var (
 
 // 初始化缓存
 func initCache() {
-	sites := []string{"example", "abc"} // 所有支持的网站ID
+	var sites []string
+	for s, _ := range getAllSiteConfig() {
+		sites = append(sites, s)
+	}
 
 	for _, site := range sites {
 		go refreshCache(site)
@@ -77,12 +82,6 @@ func initCache() {
 
 // 刷新指定网站的缓存
 func refreshCache(site string) {
-	/*config, exists := getSiteConfig(site)
-	if !exists {
-		log.Printf("Site configuration not found: %s", site)
-		return
-	}*/
-
 	log.Printf("Refreshing cache for site: %s", site)
 
 	feed, err := fetchAndGenerateRSS(site)
@@ -141,12 +140,13 @@ func generateRSSHandler(w http.ResponseWriter, r *http.Request) {
 	xml.NewEncoder(w).Encode(feed)
 }
 
-// 获取网站配置
-func getSiteConfig(site string) (SiteConfig, bool) {
-	configs := map[string]SiteConfig{
+// 获取所有网站配置
+func getAllSiteConfig() map[string]SiteConfig {
+	return map[string]SiteConfig{
 		"example": {
 			Name:          "示例网站",
 			URL:           "https://example.com",
+			ItemSelector:  "article h2",
 			TitleSelector: "article h2",
 			LinkSelector:  "article a",
 			DescSelector:  "article p.summary",
@@ -154,15 +154,21 @@ func getSiteConfig(site string) (SiteConfig, bool) {
 			DateFormat:    "2006-01-02",
 		},
 		"abc": {
-			Name:          "ABC网站",
-			URL:           "https://abc.com",
-			TitleSelector: "div.post h3",
-			LinkSelector:  "div.post a.title",
-			DescSelector:  "div.post p.excerpt",
-			DateSelector:  "div.post span.date",
-			DateFormat:    "Mon, 02 Jan 2006 15:04:05 MST",
+			Name:          "abc网站",
+			URL:           "https://www.abc.com/",
+			ItemSelector:  ".content article",
+			TitleSelector: "header a",
+			LinkSelector:  "header a",
+			DescSelector:  "p.note",
+			DateSelector:  "div.meta time",
+			DateFormat:    "2006-01-02",
 		},
 	}
+}
+
+// 获取网站配置
+func getSiteConfig(site string) (SiteConfig, bool) {
+	configs := getAllSiteConfig()
 
 	config, exists := configs[site]
 	return config, exists
@@ -180,24 +186,24 @@ func fetchAndGenerateRSS(site string) (RSSFeed, error) {
 		return RSSFeed{}, err
 	}
 
-	items := []Item{}
+	var items []Item
 
-	doc.Find(config.TitleSelector).Each(func(i int, s *goquery.Selection) {
-		title := s.Text()
+	doc.Find(config.ItemSelector).Each(func(i int, s *goquery.Selection) {
+		title := s.Find(config.TitleSelector).Text()
 
-		link, _ := s.Parent().Find(config.LinkSelector).Attr("href")
+		link, _ := s.Find(config.LinkSelector).Attr("href")
 		if !strings.HasPrefix(link, "http") {
 			link = config.URL + link
 		}
 
-		desc := s.Parent().Find(config.DescSelector).Text()
+		desc := s.Find(config.DescSelector).Text()
 
-		dateStr := s.Parent().Find(config.DateSelector).Text()
+		dateStr := s.Find(config.DateSelector).Text()
 		var pubDate string
 		if dateStr != "" {
 			t, err := time.Parse(config.DateFormat, dateStr)
 			if err == nil {
-				pubDate = t.Format(time.RFC1123Z)
+				pubDate = t.Format("2006-01-02 15:04:05")
 			}
 		}
 
@@ -226,6 +232,10 @@ func fetchAndGenerateRSS(site string) (RSSFeed, error) {
 }
 
 func main() {
+	// 解析命令行参数获取端口号
+	port := flag.String("port", "8080", "Server port")
+	flag.Parse()
+
 	// 初始化缓存
 	initCache()
 
@@ -235,6 +245,6 @@ func main() {
 		fmt.Fprintf(w, "RSS生成服务已启动！\n使用方法: /rss?site=example")
 	})
 
-	log.Println("Server started on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Printf("Server started on :%s", *port)
+	log.Fatal(http.ListenAndServe(":"+*port, nil))
 }
